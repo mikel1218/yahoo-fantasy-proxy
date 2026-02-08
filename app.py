@@ -23,7 +23,6 @@ def health():
 def fangraphs_pitchers():
     try:
         url = "https://www.fangraphs.com/leaders.aspx?pos=all&stats=pit&type=8"
-
         response = requests.get(url, headers=HEADERS, timeout=15)
 
         if response.status_code != 200:
@@ -34,19 +33,28 @@ def fangraphs_pitchers():
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        table = soup.find("table")
+        tables = soup.find_all("table")
+        if not tables:
+            return jsonify({"error": "No tables found on FanGraphs page"}), 500
 
-        if table is None:
-            return jsonify({
-                "error": "FanGraphs table not found",
-                "hint": "Page structure may have changed"
-            }), 500
+        # Parse all tables and choose the one with the most columns
+        parsed_tables = []
+        for table in tables:
+            try:
+                df = pd.read_html(StringIO(str(table)))[0]
+                parsed_tables.append(df)
+            except Exception:
+                continue
 
-        df = pd.read_html(StringIO(str(table)))[0]
+        if not parsed_tables:
+            return jsonify({"error": "Could not parse any tables"}), 500
+
+        # Choose table with most columns (actual leaderboard)
+        df = max(parsed_tables, key=lambda x: x.shape[1])
 
         expected_cols = ["Name", "K%", "BB%", "SwStr%", "GB%", "xFIP"]
-        missing = [c for c in expected_cols if c not in df.columns]
 
+        missing = [c for c in expected_cols if c not in df.columns]
         if missing:
             return jsonify({
                 "error": "Expected columns missing",
