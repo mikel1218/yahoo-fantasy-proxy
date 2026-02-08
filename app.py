@@ -12,9 +12,9 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; FantasyCoachBot/1.0)"
 }
 
-# ---------------------------
+# ======================================================
 # BASIC HEALTH
-# ---------------------------
+# ======================================================
 @app.route("/")
 def home():
     return jsonify({"status": "Fantasy middleware running"})
@@ -29,39 +29,50 @@ def health():
 # ======================================================
 @app.route("/fangraphs/pitcher_skills")
 def fangraphs_pitchers():
-    url = "https://www.fangraphs.com/leaders.aspx?pos=all&stats=pit&type=8"
-    response = requests.get(url, headers=HEADERS, timeout=15)
-    soup = BeautifulSoup(response.text, "html.parser")
+    try:
+        url = "https://www.fangraphs.com/leaders.aspx?pos=all&stats=pit&type=8"
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        soup = BeautifulSoup(response.text, "html.parser")
 
-    tables = soup.find_all("table")
-    dfs = []
+        tables = soup.find_all("table")
+        dfs = []
 
-    for table in tables:
-        try:
-            dfs.append(pd.read_html(StringIO(str(table)))[0])
-        except Exception:
-            continue
+        for table in tables:
+            try:
+                dfs.append(pd.read_html(StringIO(str(table)))[0])
+            except Exception:
+                continue
 
-    df = max(dfs, key=lambda x: x.shape[1])
+        df = max(dfs, key=lambda x: x.shape[1])
 
-    def find_col(key):
-        for c in df.columns:
-            if key.lower() in str(c).lower():
-                return c
-        return None
+        def find_col(key):
+            for c in df.columns:
+                if key.lower() in str(c).lower():
+                    return c
+            return None
 
-    result = df[
-        [
-            find_col("Name"),
-            find_col("K/9"),
-            find_col("BB/9"),
-            find_col("GB%"),
-            find_col("xFIP"),
+        result = df[
+            [
+                find_col("Name"),
+                find_col("K/9"),
+                find_col("BB/9"),
+                find_col("GB%"),
+                find_col("xFIP"),
+            ]
+        ].dropna()
+
+        result.columns = [
+            "Name",
+            "K_per_9",
+            "BB_per_9",
+            "GB_percent",
+            "xFIP",
         ]
-    ].dropna()
 
-    result.columns = ["Name", "K_per_9", "BB_per_9", "GB_percent", "xFIP"]
-    return jsonify(result.head(50).to_dict(orient="records"))
+        return jsonify(result.head(50).to_dict(orient="records"))
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ======================================================
@@ -69,67 +80,87 @@ def fangraphs_pitchers():
 # ======================================================
 @app.route("/fangraphs/hitter_skills")
 def fangraphs_hitters():
-    url = "https://www.fangraphs.com/leaders.aspx?pos=all&stats=bat&type=8"
-    response = requests.get(url, headers=HEADERS, timeout=15)
-    soup = BeautifulSoup(response.text, "html.parser")
+    try:
+        url = "https://www.fangraphs.com/leaders.aspx?pos=all&stats=bat&type=8"
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        soup = BeautifulSoup(response.text, "html.parser")
 
-    tables = soup.find_all("table")
-    dfs = []
+        tables = soup.find_all("table")
+        dfs = []
 
-    for table in tables:
-        try:
-            dfs.append(pd.read_html(StringIO(str(table)))[0])
-        except Exception:
-            continue
+        for table in tables:
+            try:
+                dfs.append(pd.read_html(StringIO(str(table)))[0])
+            except Exception:
+                continue
 
-    df = max(dfs, key=lambda x: x.shape[1])
+        df = max(dfs, key=lambda x: x.shape[1])
 
-    def find_col(key):
-        for c in df.columns:
-            if key.lower() in str(c).lower():
-                return c
-        return None
+        def find_col(key):
+            for c in df.columns:
+                if key.lower() in str(c).lower():
+                    return c
+            return None
 
-    result = df[
-        [
-            find_col("Name"),
-            find_col("K%"),
-            find_col("BB%"),
-            find_col("ISO"),
-            find_col("BABIP"),
+        result = df[
+            [
+                find_col("Name"),
+                find_col("K%"),
+                find_col("BB%"),
+                find_col("ISO"),
+                find_col("BABIP"),
+            ]
+        ].dropna()
+
+        result.columns = [
+            "Name",
+            "K_percent",
+            "BB_percent",
+            "ISO",
+            "BABIP",
         ]
-    ].dropna()
 
-    result.columns = ["Name", "K_percent", "BB_percent", "ISO", "BABIP"]
-    return jsonify(result.head(50).to_dict(orient="records"))
+        return jsonify(result.head(50).to_dict(orient="records"))
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ======================================================
-# MLB STATS API — CORE ENDPOINTS
+# MLB STATS API — SCHEDULE & USAGE
 # ======================================================
 
-# ---- Weekly Schedule (Monday–Sunday) ----
+# ---- Smart Weekly Schedule (handles offseason) ----
 @app.route("/mlb/week_schedule")
 def mlb_week_schedule():
-    today = datetime.utcnow()
-    monday = today - timedelta(days=today.weekday())
-    sunday = monday + timedelta(days=6)
+    start = datetime.utcnow().date()
+    end = start + timedelta(days=7)
 
+    def fetch_schedule(start_date, end_date):
+        url = (
+            "https://statsapi.mlb.com/api/v1/schedule"
+            f"?sportId=1&startDate={start_date}&endDate={end_date}"
+        )
+        return requests.get(url).json()
+
+    data = fetch_schedule(start, end)
+
+    # If no games (offseason / pre-season), widen window
+    if not data.get("dates"):
+        end = start + timedelta(days=30)
+        data = fetch_schedule(start, end)
+
+    return data
+
+
+# ---- Probable Starters (weekly SP planning) ----
+@app.route("/mlb/probable_starters")
+def mlb_probable_starters():
     url = (
         "https://statsapi.mlb.com/api/v1/schedule"
-        f"?sportId=1&startDate={monday.date()}&endDate={sunday.date()}"
+        "?sportId=1&hydrate=probablePitcher"
     )
-
-    response = requests.get(url)
-    return response.json()
-
-
-# ---- Probable Starters (critical for weekly lock) ----
-@app.route("/mlb/probable_starters")
-def probable_starters():
-    url = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=probablePitcher"
-    response = requests.get(url)
-    data = response.json()
+    data = requests.get(url).json()
 
     starters = []
 
@@ -149,33 +180,33 @@ def probable_starters():
     return jsonify(starters)
 
 
-# ---- Player Lookup (name → MLB ID) ----
+# ---- Player Search (name → MLB ID) ----
 @app.route("/mlb/player/<name>")
 def mlb_player_lookup(name):
     url = f"https://statsapi.mlb.com/api/v1/people/search?names={name}"
-    response = requests.get(url)
-    return response.json()
+    return requests.get(url).json()
 
 
-# ---- Pitcher Game Log (usage & workload) ----
+# ---- Pitcher Game Logs (workload & risk) ----
 @app.route("/mlb/pitcher_usage/<int:player_id>")
-def pitcher_usage(player_id):
+def mlb_pitcher_usage(player_id):
     url = (
         "https://statsapi.mlb.com/api/v1/people/"
         f"{player_id}/stats?stats=gameLog&group=pitching"
     )
-    response = requests.get(url)
-    return response.json()
+    return requests.get(url).json()
 
 
-# ---- Team Roster (bullpen / rotation context) ----
+# ---- Team Roster (bullpen & rotation context) ----
 @app.route("/mlb/team_roster/<int:team_id>")
-def team_roster(team_id):
+def mlb_team_roster(team_id):
     url = f"https://statsapi.mlb.com/api/v1/teams/{team_id}/roster"
-    response = requests.get(url)
-    return response.json()
+    return requests.get(url).json()
 
 
+# ======================================================
+# APP ENTRYPOINT
+# ======================================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
