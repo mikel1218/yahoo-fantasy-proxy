@@ -25,20 +25,11 @@ def fangraphs_pitchers():
         url = "https://www.fangraphs.com/leaders.aspx?pos=all&stats=pit&type=8"
         response = requests.get(url, headers=HEADERS, timeout=15)
 
-        if response.status_code != 200:
-            return jsonify({
-                "error": "FanGraphs request failed",
-                "status_code": response.status_code
-            }), 500
-
         soup = BeautifulSoup(response.text, "html.parser")
 
         tables = soup.find_all("table")
-        if not tables:
-            return jsonify({"error": "No tables found on FanGraphs page"}), 500
-
-        # Parse all tables and choose the one with the most columns
         parsed_tables = []
+
         for table in tables:
             try:
                 df = pd.read_html(StringIO(str(table)))[0]
@@ -47,24 +38,47 @@ def fangraphs_pitchers():
                 continue
 
         if not parsed_tables:
-            return jsonify({"error": "Could not parse any tables"}), 500
+            return jsonify({"error": "No parsable tables found"}), 500
 
-        # Choose table with most columns (actual leaderboard)
+        # Use the widest table = real leaderboard
         df = max(parsed_tables, key=lambda x: x.shape[1])
 
-        expected_cols = ["Name", "K%", "BB%", "SwStr%", "GB%", "xFIP"]
+        # Column helpers
+        def find_col(keyword):
+            for col in df.columns:
+                if keyword.lower() in str(col).lower():
+                    return col
+            return None
 
-        missing = [c for c in expected_cols if c not in df.columns]
+        col_map = {
+            "Name": find_col("Name"),
+            "K/9": find_col("K/9"),
+            "BB/9": find_col("BB/9"),
+            "GB%": find_col("GB%"),
+            "xFIP": find_col("xFIP")
+        }
+
+        missing = [k for k, v in col_map.items() if v is None]
         if missing:
             return jsonify({
-                "error": "Expected columns missing",
-                "missing_columns": missing,
+                "error": "Required metrics not found",
+                "missing_metrics": missing,
                 "available_columns": list(df.columns)
             }), 500
 
-        df = df[expected_cols].dropna()
+        result = df[
+            [
+                col_map["Name"],
+                col_map["K/9"],
+                col_map["BB/9"],
+                col_map["GB%"],
+                col_map["xFIP"]
+            ]
+        ].dropna()
 
-        return jsonify(df.head(50).to_dict(orient="records"))
+        result.columns = ["Name", "K_per_9", "BB_per_9", "GB_percent", "xFIP"]
+
+        return jsonify(result.head(50).to_dict(orient="records"))
 
     except Exception as e:
         return jsonify({
