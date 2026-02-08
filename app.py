@@ -10,15 +10,6 @@ def home():
 def health():
     return jsonify({"status": "ok"})
 
-if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-
-from bs4 import BeautifulSoup
-import pandas as pd l
-from io import StringIO
-
 @app.route("/fangraphs/pitcher_skills")
 def fangraphs_pitchers():
     url = (
@@ -35,3 +26,12 @@ def fangraphs_pitchers():
     df = df[cols].dropna()
 
     return df.head(50).to_json(orient="records")
+
+if __name__ == "__main__":
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
+from bs4 import BeautifulSoup
+import pandas as pd l
+from io import StringIO
